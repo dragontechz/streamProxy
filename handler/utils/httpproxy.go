@@ -1,4 +1,4 @@
-package main
+package utils
 
 import (
 	"fmt"
@@ -9,6 +9,10 @@ import (
 	"net"
 	"strings"
 )
+
+type Proxy struct {
+	Listening_Port string
+}
 
 func logRequest(method, url, addr string) {
 	log.Printf("Received request: %s %s from %s", method, url, addr)
@@ -36,7 +40,7 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
-	logRequest(method, url, conn.RemoteAddr().String())
+	//logRequest(method, url, conn.RemoteAddr().String())
 
 	if method == "CONNECT" {
 		var targetHost string
@@ -94,10 +98,10 @@ func handleConnection(conn net.Conn) {
 	go io.Copy(conn, targetConn)
 	io.Copy(targetConn, conn)
 }
-func main() {
-	log.Println("Proxy HTTP transparent en cours d'exécution sur :8080")
+func (p *Proxy) Run() {
+	log.Printf("Proxy HTTP transparent en cours d'exécution sur %s\n", p.Listening_Port)
 
-	listener, err := net.Listen("tcp", ":8080")
+	listener, err := net.Listen("tcp", p.Listening_Port)
 	if err != nil {
 		log.Fatalf("Error starting server: %v", err)
 		return

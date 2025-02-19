@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"stream/utils"
 	"strings"
@@ -17,7 +18,7 @@ Host: c.whatsapp.net
 User-Agent: Mozilla/5.0 (compatible; WAChat/1.2; +http://www.whatsHTTP/1.0app.com/contact)\start\end`
 var DefaultInstreamPort string = "1118"
 var DefaultOutstreamPort string = "1117"
-var ADDR string := "170.205.31.126"
+var ADDR string = ""
 
 type packet struct {
 	buff []byte
@@ -36,7 +37,7 @@ func main() {
 	payload := flag.String("payload", DEFAULT_PAYLOAD, "set the payload")
 	serving_port := ":9090"
 	flag.Parse()
-	server := server{serving_port, ADDR +":" + *inport, *payload, ADDR +":" + *outport}
+	server := server{serving_port, ADDR + ":" + *inport, *payload, ADDR + ":" + *outport}
 	server.Run()
 }
 
@@ -68,18 +69,23 @@ func (s *server) inSTREAM(conn net.Conn, sessionid string) {
 	for {
 		dst, err := net.Dial("tcp", s.outstreamAddr)
 		if err != nil {
-			fmt.Println("error in inSTREAM func: ", err)
+			fmt.Printf("connection to ip addr : %s impossible because %v \n", s.outstreamAddr, err)
+			break
 		}
 
 		req := utils.InsertQuery(s.payload, sessionid+":")
 		_, err = dst.Write([]byte(req))
 		if err != nil {
-			fmt.Println("error in istream func : ", err)
+			fmt.Println("error in istream func : \n", err)
 		}
+
 		buff := make([]byte, 1024*8)
 		n, err := dst.Read(buff)
 		if err != nil {
-			fmt.Printf("error in instream func: %v", err)
+			if err == io.EOF {
+			}
+			fmt.Printf("cann't read from server: %v\n", err)
+			break
 		}
 		data := string(buff[:n])
 		fmt.Printf("recved: %s", data)
@@ -99,6 +105,9 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 
 		n, err := conn.Read(buff)
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			//fmt.Printf("error in outstream func from client: %v\n", err)
 			//continue
 		}
@@ -122,6 +131,9 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 		for {
 			n, err = dst.Read(buff)
 			if err != nil {
+				if err == io.EOF {
+					fmt.Printf("coonnection was closed because of %v", err)
+				}
 				fmt.Printf("error in outstream func : %v", err)
 				break
 			}

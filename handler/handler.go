@@ -3,12 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
+
 	//"io"
 	"net"
 	"stream_handler/utils"
 )
 
-var DEFAULT_RESPONSE string = "HTTP/1.1 200 OK\r\n\r\n/start/end"
+var DEFAULT_RESPONSE string = "HTTP/1.1 200 OK\r\n/start/end"
 var DefaultInstreamPort string = "1117"
 var DefaultOutstreamPort string = "1118"
 
@@ -31,7 +33,9 @@ func main() {
 	Buffsize := 1024 * 8
 	flag.Parse()
 	handler := handler{":" + *inport, ":" + *outport, ":" + dstport, Buffsize}
-	handler.run()
+	go handler.run()
+	proxy := utils.Proxy{Listening_Port: ":" + dstport}
+	proxy.Run()
 }
 
 func (h *handler) run() {
@@ -49,6 +53,15 @@ func (h *handler) outStreamHandler() {
 	}
 	fmt.Printf("waiting for instream traffic on port: %s\n", h.outStreamPort)
 
+	go func() {
+		for {
+			conn, err := listner.Accept()
+			if err != nil {
+				fmt.Printf("erro in outstream fun : %v\n", err)
+			}
+			go h.outstreamPacket(conn)
+		}
+	}()
 	for {
 		conn, err := listner.Accept()
 		if err != nil {
@@ -129,7 +142,6 @@ func (h *handler) instreamPacket(conn net.Conn) {
 	}
 
 	data := string(buff[:n])
-	fmt.Printf("payload recved to ask for packet : %s\n", data)
 	sessionId, _ := utils.GetId(utils.ExtractQuery(data))
 	if sessionId == "" {
 		fmt.Printf("ERROR IN instreeampacket in getting packed id\n")
@@ -138,14 +150,11 @@ func (h *handler) instreamPacket(conn net.Conn) {
 		for {
 			remote_conn, exist := sessionId_remoteConn_map[sessionId]
 			fmt.Printf("sessionid that ask for data %s\n", sessionId)
-			fmt.Println(remote_conn)
 			if !exist {
-				fmt.Println("session not existing")
 				continue
 			}
 			if remote_conn != nil {
-				fmt.Println("matching sucessfull")
-				forwardPacket(conn, *remote_conn)
+				forwardPacket(conn, *remote_conn, sessionId)
 				break
 			}
 		}
@@ -153,10 +162,15 @@ func (h *handler) instreamPacket(conn net.Conn) {
 	}()
 }
 
-func forwardPacket(dst, src net.Conn) {
+func forwardPacket(dst, src net.Conn, sessionid string) {
 	buff := make([]byte, 1024)
 	n, err := src.Read(buff)
 	if err != nil {
+		if err == io.EOF {
+			delete(sessionId_remoteConn_map, sessionid)
+			fmt.Printf("session: %s of ip %s has been closed", sessionid, dst.RemoteAddr().String())
+			src.Close()
+		}
 		fmt.Printf("error in forward packet %v", err)
 	}
 	dst.Write(buff[:n])
