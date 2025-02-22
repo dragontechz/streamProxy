@@ -4,18 +4,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
-
-	//"io"
 	"net"
 	"stream_handler/utils"
+	"sync"
 )
 
-var DEFAULT_RESPONSE string = "HTTP/1.1 200 OK\r\n/start/end"
+var DEFAULT_RESPONSE string = "HTTP/1.1 200 OK\r\n"
 var DefaultInstreamPort string = "1117"
 var DefaultOutstreamPort string = "1118"
 
 // var remoteConn_IP_map map[string]*net.Conn = make(map[string]*net.Conn)
 var sessionId_remoteConn_map map[string]*net.Conn = make(map[string]*net.Conn)
+
+var SESSIONID_REMOTE_CONN_map sync.Map
 
 //var packetId_packet_map map[string][]string = make(map[string][]string)
 
@@ -34,8 +35,8 @@ func main() {
 	flag.Parse()
 	handler := handler{":" + *inport, ":" + *outport, ":" + dstport, Buffsize}
 	go handler.run()
-	proxy := utils.Proxy{Listening_Port: ":" + dstport}
-	proxy.Run()
+	proxy := utils.SOCKS5{Listn_addr: ":" + dstport}
+	proxy.RUN_v5()
 }
 
 func (h *handler) run() {
@@ -89,17 +90,25 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 			fmt.Printf("error with arguement data : %s , req: %s ,query: %s ,sessionId: %s \n", data, req, query, sessionId)
 			break
 		}
-		remote_conn, exist := sessionId_remoteConn_map[sessionId]
+		dst, exist := SESSIONID_REMOTE_CONN_map.Load(sessionId)
 		if !exist {
 			dstConn, err := h.makeremoteConn()
 			if err != nil {
 				fmt.Printf("error while mapping %v :\n", err)
 				break
 			}
-			sessionId_remoteConn_map[sessionId] = &dstConn
-			remote_conn, _ := sessionId_remoteConn_map[sessionId]
+			SESSIONID_REMOTE_CONN_map.Store(sessionId, &dstConn)
+			dst, _ := SESSIONID_REMOTE_CONN_map.Load(sessionId)
+			remote_conn := dst.(*net.Conn)
 
-			_, err = (*remote_conn).Write([]byte(query))
+			query, err = utils.Decompress_str(query)
+
+			if err != nil {
+				fmt.Printf("error in decompression: %v\n", err)
+			}
+
+			fmt.Printf("decompressed query : %s\n", query)
+			_, err = (*remote_conn).Write([]byte(query)) //
 			if err != nil {
 				fmt.Printf("error while writing to remote conn %v : ", err)
 			}
@@ -107,6 +116,11 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 			break
 
 		} else {
+			remote_conn := dst.(*net.Conn)
+			query, err = utils.Decompress_str(query)
+			if err != nil {
+				fmt.Printf("error in outstream packet in decompression: %v\n", err)
+			}
 			_, err = (*remote_conn).Write([]byte(query))
 			if err != nil {
 				fmt.Printf("error while writing to remote conn %v : ", err)
@@ -132,13 +146,12 @@ func (h *handler) instreamHandler() {
 		go h.instreamPacket(conn)
 	}
 }
-
 func (h *handler) instreamPacket(conn net.Conn) {
 	// send response to client
 	buff := make([]byte, h.BUFFSIZE)
 	n, err := conn.Read(buff)
 	if err != nil {
-		fmt.Printf("error in instreamPacket : %v", err)
+		fmt.Printf("error in instreamPacket : %v\n", err)
 	}
 
 	data := string(buff[:n])
@@ -147,18 +160,21 @@ func (h *handler) instreamPacket(conn net.Conn) {
 		fmt.Printf("ERROR IN instreeampacket in getting packed id\n")
 	}
 	go func() {
+		fmt.Printf("sessionid that ask for data %s\n", sessionId)
 		for {
-			remote_conn, exist := sessionId_remoteConn_map[sessionId]
-			fmt.Printf("sessionid that ask for data %s\n", sessionId)
+			remoteConnInterface, exist := SESSIONID_REMOTE_CONN_map.Load(sessionId)
+
 			if !exist {
 				continue
 			}
-			if remote_conn != nil {
-				forwardPacket(conn, *remote_conn, sessionId)
+
+			remoteConn, ok := remoteConnInterface.(*net.Conn)
+			if ok && remoteConn != nil {
+				fmt.Printf("matching sessionid :%s\n", sessionId)
+				forwardPacket(conn, (*remoteConn), sessionId)
 				break
 			}
 		}
-		//		infectedRes := DEFAULT_RESPONSE + "*/query:" + res
 	}()
 }
 
@@ -167,15 +183,19 @@ func forwardPacket(dst, src net.Conn, sessionid string) {
 	n, err := src.Read(buff)
 	if err != nil {
 		if err == io.EOF {
-			delete(sessionId_remoteConn_map, sessionid)
-			fmt.Printf("session: %s of ip %s has been closed", sessionid, dst.RemoteAddr().String())
+			SESSIONID_REMOTE_CONN_map.Delete(sessionid)
+			fmt.Printf("session: %s of ip %s has been closed\n", sessionid, dst.RemoteAddr().String())
 			src.Close()
 		}
-		fmt.Printf("error in forward packet %v", err)
+		fmt.Printf("error in forward packet %v\n", err)
+		return
 	}
-	dst.Write(buff[:n])
-	dst.Close()
+	data := string(buff[:n])
+	fmt.Printf("forwar packet of value: %s\n", data)
+	res := utils.InsertQuery(DEFAULT_RESPONSE, utils.Compress_str(data))
 
+	dst.Write([]byte(res))
+	dst.Close()
 }
 
 func (h *handler) makeremoteConn() (net.Conn, error) {

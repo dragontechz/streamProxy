@@ -18,7 +18,7 @@ Host: c.whatsapp.net
 User-Agent: Mozilla/5.0 (compatible; WAChat/1.2; +http://www.whatsHTTP/1.0app.com/contact)\start\end`
 var DefaultInstreamPort string = "1118"
 var DefaultOutstreamPort string = "1117"
-var ADDR string = ""
+var ADDR string = "" //"170.205.31.126"
 
 type packet struct {
 	buff []byte
@@ -88,9 +88,16 @@ func (s *server) inSTREAM(conn net.Conn, sessionid string) {
 			break
 		}
 		data := string(buff[:n])
-		fmt.Printf("recved: %s", data)
-		//res := extractRes(data)
-		conn.Write([]byte(data))
+		fmt.Printf("before extraction : %s\n", data)
+		res := utils.ExtractQuery(data)
+		fmt.Printf("before decompression %s\n", res)
+		res, err = utils.Decompress_str(res)
+		if err != nil {
+			fmt.Printf("error decompressing: %v\n", err)
+		}
+		fmt.Printf("after decompression: %s\n", res)
+
+		conn.Write([]byte(res))
 
 		dst.Close()
 		fmt.Printf("continuing\n")
@@ -120,7 +127,7 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 			break
 		}
 		req := string(buff[:n])
-		maskedQuery := utils.InsertQuery(s.payload, sessionid+":"+req)
+		maskedQuery := utils.InsertQuery(s.payload, sessionid+":"+utils.Compress_str(req))
 
 		_, err = dst.Write([]byte(maskedQuery))
 		if err != nil {

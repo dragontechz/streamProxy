@@ -3,13 +3,16 @@ package utils
 import (
 	"fmt"
 	"io"
-
-	//	"io"
 	"log"
+	"strconv"
+	//	"io"
 	"net"
 	"strings"
 )
 
+type SOCKS5 struct {
+	Listn_addr string
+}
 type Proxy struct {
 	Listening_Port string
 }
@@ -115,5 +118,124 @@ func (p *Proxy) Run() {
 		}
 		fmt.Println("new connection initialised")
 		go handleConnection(conn) // Gérer chaque connexion dans une goroutine
+	}
+}
+
+const (
+	socks5Ver         = 0x05
+	cmdConnect        = 0x01
+	atypIPv4          = 0x01
+	atypDomain        = 0x03
+	socks5NoAuth      = 0x00
+	socks5Success     = 0x00
+	socks5GeneralFail = 0x01
+)
+
+func handleConnection_sock(clientConn net.Conn) {
+	defer clientConn.Close()
+
+	// Read SOCKS5 greeting
+	buf := make([]byte, 256)
+	n, err := clientConn.Read(buf)
+	if err != nil {
+		log.Printf("Error reading greeting: %v", err)
+		return
+	}
+
+	// Check version and authentication methods
+	if n < 2 || buf[0] != socks5Ver || buf[1] == 0 {
+		return
+	}
+
+	// Respond with no authentication required
+	_, err = clientConn.Write([]byte{socks5Ver, socks5NoAuth})
+	if err != nil {
+		log.Printf("Error sending auth response: %v", err)
+		return
+	}
+
+	// Read connection request
+	n, err = clientConn.Read(buf)
+	if err != nil {
+		log.Printf("Error reading request: %v", err)
+		return
+	}
+	if n < 7 || buf[0] != socks5Ver || buf[1] != cmdConnect {
+		return // Only supporting CONNECT command
+	}
+
+	// Parse destination address
+	var host string
+	var port uint16
+	var portStr string
+
+	switch buf[3] { // ATYP field
+	case atypIPv4:
+		if n < 10 {
+			return
+		}
+		host = net.IPv4(buf[4], buf[5], buf[6], buf[7]).String()
+		port = uint16(buf[8])<<8 | uint16(buf[9])
+	case atypDomain:
+		domainLen := int(buf[4])
+		if n < 7+domainLen {
+			return
+		}
+		host = string(buf[5 : 5+domainLen])
+		port = uint16(buf[5+domainLen])<<8 | uint16(buf[6+domainLen])
+		portStr = strconv.Itoa(int(port))
+	default:
+		return // Unsupported address type
+	}
+
+	// Connect to destination
+	//dst_host := net.JoinHostPort(host[:len(host)-1], string(port))
+	//fmt.Println("dst host : ", dst_host)
+	destConn, err := net.Dial("tcp", host+":"+portStr)
+	if err != nil {
+		clientConn.Write([]byte{socks5Ver, socks5GeneralFail, 0x00, atypIPv4, 0, 0, 0, 0, 0, 0})
+		log.Printf("Error connecting to destination %s:%d: %v", host, port, err)
+		return
+	}
+	defer destConn.Close()
+
+	// Send success response
+	resp := []byte{socks5Ver, socks5Success, 0x00, atypIPv4, 0, 0, 0, 0, 0, 0}
+	_, err = clientConn.Write(resp)
+	if err != nil {
+		log.Printf("Error sending success response: %v", err)
+		return
+	}
+
+	// Bidirectional copy
+	go func() {
+		_, err := io.Copy(destConn, clientConn)
+		if err != nil && err != io.EOF {
+			log.Printf("Error copying client to dest: %v", err)
+		}
+	}()
+
+	_, err = io.Copy(clientConn, destConn)
+	if err != nil && err != io.EOF {
+		log.Printf("Error copying dest to client: %v", err)
+	}
+}
+
+func (s *SOCKS5) RUN_v5() {
+	listener, err := net.Listen("tcp", s.Listn_addr)
+	if err != nil {
+		log.Fatalf("Error starting SOCKS5 server: %v", err)
+	}
+	defer listener.Close()
+	log.Printf("SOCKS5 proxy listening on %s", s.Listn_addr)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Error accepting connection: %v", err)
+			continue
+		}
+		fmt.Printf("new connection\n")
+		go handleConnection_sock(conn)
 	}
 }

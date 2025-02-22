@@ -1,9 +1,40 @@
 package utils
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io/ioutil"
 	"strings"
 )
+
+func Compress_str(data string) string {
+	var buff bytes.Buffer
+	writer := gzip.NewWriter(&buff)
+
+	_, err := writer.Write([]byte(data))
+	if err != nil {
+		fmt.Println("ERROR IN COMPRESSING DATA : ", err)
+	}
+	writer.Close()
+
+	return buff.String()
+}
+
+func Decompress_str(data string) (string, error) {
+	reader, err := gzip.NewReader(bytes.NewBufferString(data))
+	if err != nil {
+		fmt.Println("ERROR IN DECOMPRESSING: ", err)
+		return "", err
+	}
+	decompressed_bytes, err := ioutil.ReadAll(reader)
+	if err != nil {
+		fmt.Println("error in decompression: ", err)
+		return "", err
+	}
+
+	return string(decompressed_bytes), nil
+}
 
 // Fonction pour insérer une valeur entre /start et /end
 func InsertQuery(chaine, valeur string) string {
