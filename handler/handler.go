@@ -73,6 +73,8 @@ func (h *handler) outStreamHandler() {
 }
 
 func (h *handler) outstreamPacket(conn net.Conn) {
+	channel := make(chan net.Conn)
+	go utils.MakeConn(h.dstPORT, channel)
 	for {
 		buff := make([]byte, h.BUFFSIZE)
 		n, err := conn.Read(buff)
@@ -92,11 +94,7 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 		}
 		dst, exist := SESSIONID_REMOTE_CONN_map.Load(sessionId)
 		if !exist {
-			dstConn, err := h.makeremoteConn()
-			if err != nil {
-				fmt.Printf("error while mapping %v :\n", err)
-				break
-			}
+			dstConn := <-channel
 			SESSIONID_REMOTE_CONN_map.Store(sessionId, &dstConn)
 			dst, _ := SESSIONID_REMOTE_CONN_map.Load(sessionId)
 			remote_conn := dst.(*net.Conn)
@@ -107,7 +105,7 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 				fmt.Printf("error in decompression: %v\n", err)
 			}
 
-			fmt.Printf("decompressed query : %s\n", query)
+			//fmt.Printf("decompressed query : %s\n", query)
 			_, err = (*remote_conn).Write([]byte(query)) //
 			if err != nil {
 				fmt.Printf("error while writing to remote conn %v : ", err)
@@ -160,26 +158,27 @@ func (h *handler) instreamPacket(conn net.Conn) {
 		fmt.Printf("ERROR IN instreeampacket in getting packed id\n")
 	}
 	go func() {
-		fmt.Printf("sessionid that ask for data %s\n", sessionId)
+		//fmt.Printf("sessionid that ask for data %s\n", sessionId)
 		for {
-			remoteConnInterface, exist := SESSIONID_REMOTE_CONN_map.Load(sessionId)
+			remoteConnInterface, _ := SESSIONID_REMOTE_CONN_map.Load(sessionId)
 
-			if !exist {
-				continue
-			}
+			//if !exist {
+			//	continue
+			//}
 
 			remoteConn, ok := remoteConnInterface.(*net.Conn)
 			if ok && remoteConn != nil {
 				fmt.Printf("matching sessionid :%s\n", sessionId)
-				forwardPacket(conn, (*remoteConn), sessionId)
+				go h.forwardPacket(conn, (*remoteConn), sessionId)
 				break
 			}
 		}
 	}()
 }
 
-func forwardPacket(dst, src net.Conn, sessionid string) {
-	buff := make([]byte, 1024)
+func (h *handler) forwardPacket(dst, src net.Conn, sessionid string) {
+	defer dst.Close()
+	buff := make([]byte, h.BUFFSIZE*8)
 	n, err := src.Read(buff)
 	if err != nil {
 		if err == io.EOF {
@@ -191,17 +190,8 @@ func forwardPacket(dst, src net.Conn, sessionid string) {
 		return
 	}
 	data := string(buff[:n])
-	fmt.Printf("forwar packet of value: %s\n", data)
+	fmt.Printf("forwar packet of value: %f kb\n", float64(len(data))/1024.0)
 	res := utils.InsertQuery(DEFAULT_RESPONSE, utils.Compress_str(data))
 
 	dst.Write([]byte(res))
-	dst.Close()
-}
-
-func (h *handler) makeremoteConn() (net.Conn, error) {
-	conn, err := net.Dial("tcp", h.dstPORT)
-	if err != nil {
-		return nil, err
-	}
-	return conn, err
 }

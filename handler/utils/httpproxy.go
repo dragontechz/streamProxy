@@ -17,7 +17,7 @@ type Proxy struct {
 	Listening_Port string
 }
 
-func logRequest(method, url, addr string) {
+func LogRequest(method, url, addr string) {
 	log.Printf("Received request: %s %s from %s", method, url, addr)
 }
 

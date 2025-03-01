@@ -6,7 +6,7 @@ import (
 	"io"
 	"net"
 	"stream/utils"
-	"strings"
+	//"strings"
 )
 
 const (
@@ -31,6 +31,9 @@ type server struct {
 	outstreamAddr string
 }
 
+var channeloutstreamaddr chan net.Conn = make(chan net.Conn)
+var channelintstreamaddr chan net.Conn = make(chan net.Conn)
+
 func main() {
 	inport := flag.String("inport", DefaultInstreamPort, "set the instream port")
 	outport := flag.String("outport", DefaultOutstreamPort, "set the outstream port")
@@ -47,6 +50,9 @@ func (s *server) Run() {
 	if err != nil {
 		fmt.Println("ERROR listening: ", err)
 	}
+
+	go utils.MakeConn(s.outstreamAddr, channeloutstreamaddr)
+	go utils.MakeConn(s.instreamAddr, channelintstreamaddr)
 	for {
 
 		conn, err := listener.Accept()
@@ -63,46 +69,56 @@ func (s *server) handle_traffic(conn net.Conn) {
 	sessionid := utils.GenerateRandomString(SESSIONIDLENGTH)
 	go s.inSTREAM(conn, sessionid)
 	go s.outSTREAM(conn, sessionid)
+	//go s.outSTREAM(conn, sessionid)
 
 }
 func (s *server) inSTREAM(conn net.Conn, sessionid string) {
-	for {
-		dst, err := net.Dial("tcp", s.outstreamAddr)
-		if err != nil {
-			fmt.Printf("connection to ip addr : %s impossible because %v \n", s.outstreamAddr, err)
-			break
-		}
+	//	channel := make(chan net.Conn)
+	res_chan := make(chan string)
+	//	go utils.MakeConn(s.outstreamAddr, channel)
+	go func() {
 
-		req := utils.InsertQuery(s.payload, sessionid+":")
-		_, err = dst.Write([]byte(req))
-		if err != nil {
-			fmt.Println("error in istream func : \n", err)
-		}
+		for {
+			dst := <-channeloutstreamaddr
+			req := utils.InsertQuery(s.payload, sessionid+":")
 
-		buff := make([]byte, 1024*8)
-		n, err := dst.Read(buff)
-		if err != nil {
-			if err == io.EOF {
+			_, err := dst.Write([]byte(req))
+			if err != nil {
+				fmt.Println("error in istream func : \n", err)
 			}
-			fmt.Printf("cann't read from server: %v\n", err)
-			break
+
+			buff := make([]byte, 1024*8*8)
+			n, err := dst.Read(buff)
+			if err != nil {
+				if err == io.EOF {
+				}
+				fmt.Printf("cann't read from server: %v\n", err)
+				break
+			}
+			data := string(buff[:n])
+
+			//fmt.Printf("before extraction : %s\n", data)
+			res := utils.ExtractQuery(data)
+			fmt.Printf("before decompression %f kb\n", float64(len(res))/1024.0)
+			res, err = utils.Decompress_str(res)
+			if err != nil {
+				fmt.Printf("error decompressing: %v\n", err)
+			}
+			fmt.Printf("after decompression %f kb\n", float64(len(res))/1024.0)
+			res_chan <- res
+
+			dst.Close()
+			fmt.Printf("continuing\n")
+
+			//conn.Write([]byte(res))
+			continue
+
 		}
-		data := string(buff[:n])
-		fmt.Printf("before extraction : %s\n", data)
-		res := utils.ExtractQuery(data)
-		fmt.Printf("before decompression %s\n", res)
-		res, err = utils.Decompress_str(res)
-		if err != nil {
-			fmt.Printf("error decompressing: %v\n", err)
-		}
-		fmt.Printf("after decompression: %s\n", res)
+	}()
 
-		conn.Write([]byte(res))
-
-		dst.Close()
-		fmt.Printf("continuing\n")
-		continue
-
+	for {
+		res := <-res_chan
+		go conn.Write([]byte(res))
 	}
 }
 
@@ -121,11 +137,7 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 		if n < 1 {
 			continue
 		}
-		dst, err := s.makeConn(s.instreamAddr)
-		if err != nil {
-			fmt.Println("error in inSTREAM func: ", err)
-			break
-		}
+		dst := <-channelintstreamaddr
 		req := string(buff[:n])
 		maskedQuery := utils.InsertQuery(s.payload, sessionid+":"+utils.Compress_str(req))
 
@@ -136,7 +148,7 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 
 		}
 		for {
-			n, err = dst.Read(buff)
+			_, err = dst.Read(buff)
 			if err != nil {
 				if err == io.EOF {
 					fmt.Printf("coonnection was closed because of %v", err)
@@ -144,11 +156,11 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 				fmt.Printf("error in outstream func : %v", err)
 				break
 			}
-			if n < 1 {
-				continue
-			}
-			res := string(buff[:n])
-			fmt.Printf("%s\n", res)
+			//if n < 1 {
+			//	continue
+			//}
+			//res := string(buff[:n])
+			//fmt.Printf("%s\n", res)
 			break
 		}
 
@@ -156,15 +168,15 @@ func (s *server) outSTREAM(conn net.Conn, sessionid string) {
 }
 
 // return a conn
-func (s *server) makeConn(addr string) (net.Conn, error) {
+/*func (s *server) makeConn(addr string) (net.Conn, error) {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return nil, nil
 	}
 	return conn, err
-}
+}*/
 
-func forward_to_client(dst, client net.Conn) {
+/*func forward_to_client(dst, client net.Conn) {
 	for {
 		buff := make([]byte, 1024*3)
 
@@ -187,15 +199,4 @@ func forward_to_client(dst, client net.Conn) {
 		}
 		//break
 	}
-}
-
-func extractRes(data string) string {
-	start := strings.Index(data, "*/query:")
-	if start < 0 {
-		fmt.Println("no data in response func extractres")
-		return ""
-	}
-
-	req := data[start+len("*/query:"):]
-	return req
-}
+}*/
