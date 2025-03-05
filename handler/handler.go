@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"stream_handler/utils"
 	"sync"
+	"time"
 )
 
 var DEFAULT_RESPONSE string = "HTTP/1.1 200 OK\r\n"
@@ -111,6 +113,7 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 				fmt.Printf("error while writing to remote conn %v : ", err)
 			}
 			conn.Write([]byte("HTTP/1.1 200 Byteok \r\n\r\n"))
+			conn.Close()
 			break
 
 		} else {
@@ -124,6 +127,7 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 				fmt.Printf("error while writing to remote conn %v : ", err)
 			}
 			conn.Write([]byte("HTTP/1.1 200 Byteok \r\n\r\n"))
+			conn.Close()
 			break
 		}
 	}
@@ -157,28 +161,34 @@ func (h *handler) instreamPacket(conn net.Conn) {
 	if sessionId == "" {
 		fmt.Printf("ERROR IN instreeampacket in getting packed id\n")
 	}
+	ctx := context.Background()
 	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
 		//fmt.Printf("sessionid that ask for data %s\n", sessionId)
 		for {
+
+			select {
+			case <-ctx.Done():
+				break
+			}
+
 			remoteConnInterface, _ := SESSIONID_REMOTE_CONN_map.Load(sessionId)
-
-			//if !exist {
-			//	continue
-			//}
-
 			remoteConn, ok := remoteConnInterface.(*net.Conn)
 			if ok && remoteConn != nil {
 				fmt.Printf("matching sessionid :%s\n", sessionId)
-				go h.forwardPacket(conn, (*remoteConn), sessionId)
+				h.forwardPacket(conn, (*remoteConn), sessionId)
+				conn.Close()
 				break
 			}
 		}
 	}()
+
 }
 
 func (h *handler) forwardPacket(dst, src net.Conn, sessionid string) {
 	defer dst.Close()
-	buff := make([]byte, h.BUFFSIZE*8)
+	buff := make([]byte, h.BUFFSIZE)
 	n, err := src.Read(buff)
 	if err != nil {
 		if err == io.EOF {
@@ -194,4 +204,5 @@ func (h *handler) forwardPacket(dst, src net.Conn, sessionid string) {
 	res := utils.InsertQuery(DEFAULT_RESPONSE, utils.Compress_str(data))
 
 	dst.Write([]byte(res))
+
 }

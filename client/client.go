@@ -19,6 +19,7 @@ User-Agent: Mozilla/5.0 (compatible; WAChat/1.2; +http://www.whatsHTTP/1.0app.co
 var DefaultInstreamPort string = "1118"
 var DefaultOutstreamPort string = "1117"
 var ADDR string = "" //"170.205.31.126"
+var RECV_buff int = 1024 * 65
 
 type packet struct {
 	buff []byte
@@ -73,6 +74,7 @@ func (s *server) handle_traffic(conn net.Conn) {
 
 }
 func (s *server) inSTREAM(conn net.Conn, sessionid string) {
+	defer conn.Close()
 	//	channel := make(chan net.Conn)
 	res_chan := make(chan string)
 	//	go utils.MakeConn(s.outstreamAddr, channel)
@@ -87,12 +89,13 @@ func (s *server) inSTREAM(conn net.Conn, sessionid string) {
 				fmt.Println("error in istream func : \n", err)
 			}
 
-			buff := make([]byte, 1024*8*8)
+			buff := make([]byte, RECV_buff)
 			n, err := dst.Read(buff)
 			if err != nil {
 				if err == io.EOF {
 				}
 				fmt.Printf("cann't read from server: %v\n", err)
+				dst.Close()
 				break
 			}
 			data := string(buff[:n])
@@ -118,7 +121,11 @@ func (s *server) inSTREAM(conn net.Conn, sessionid string) {
 
 	for {
 		res := <-res_chan
-		go conn.Write([]byte(res))
+		_, err := conn.Write([]byte(res))
+		if err != nil {
+			fmt.Printf("error in recv channel: %v\n", err)
+			conn.Close()
+		}
 	}
 }
 
