@@ -78,7 +78,7 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 	channel := make(chan net.Conn)
 	go utils.MakeConn(h.dstPORT, channel)
 	for {
-		buff := make([]byte, h.BUFFSIZE)
+		buff := make([]byte, h.BUFFSIZE*8)
 		n, err := conn.Read(buff)
 		if err != nil {
 			fmt.Printf("error in oustreampacket func : %v \n", err)
@@ -91,7 +91,7 @@ func (h *handler) outstreamPacket(conn net.Conn) {
 		req := utils.ExtractQuery(data)
 		sessionId, query := utils.GetId(req)
 		if sessionId == "" /* || query == ""*/ {
-			fmt.Printf("error with arguement data : %s , req: %s ,query: %s ,sessionId: %s \n", data, req, query, sessionId)
+			//fmt.Printf("error with arguement data : %s , req: %s ,query: %s ,sessionId: %s \n", data, req, query, sessionId)
 			break
 		}
 		dst, exist := SESSIONID_REMOTE_CONN_map.Load(sessionId)
